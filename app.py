@@ -114,8 +114,9 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
     if st.button("🔁 Refresh Now", use_container_width=True):
-        if st.session_state.source and st.session_state.mode == "stream":
-            st.session_state.source.push_new_transactions(n=5)
+        src = st.session_state.source
+        if src and st.session_state.mode == "stream" and hasattr(src, "push_new_transactions"):
+            src.push_new_transactions(n=5)
         st.rerun()
 
     st.divider()
@@ -125,16 +126,33 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════
 #  LOAD DATA
 # ══════════════════════════════════════════════════════════════
+
+# Auto-load CSV on first run
 if st.session_state.source is None:
     try:
         st.session_state.source = build_source(mode="batch")
+        st.session_state.source_mode = "batch"
+    except FileNotFoundError:
+        st.warning("👈 Upload your CSV using the sidebar to get started.")
+        st.stop()
+
+# If user toggled the mode, rebuild the source with correct type
+current_mode = st.session_state.mode
+last_mode    = st.session_state.get("source_mode", "batch")
+
+if current_mode != last_mode:
+    # Mode changed — rebuild source
+    try:
+        st.session_state.source = build_source(mode=current_mode)
+        st.session_state.source_mode = current_mode
     except FileNotFoundError:
         st.warning("👈 Upload your CSV using the sidebar to get started.")
         st.stop()
 
 source = st.session_state.source
 
-if st.session_state.mode == "stream":
+# Only push new transactions if source actually supports it (stream mode)
+if current_mode == "stream" and hasattr(source, "push_new_transactions"):
     source.push_new_transactions(n=3)
 
 try:
@@ -427,7 +445,21 @@ with tab5:
             fig_user.add_trace(go.Scatter(x=flagged_u["timestamp"],  y=flagged_u["amount"],  mode="markers", name="Flagged 🚨", marker=dict(color=C["red"], size=14, symbol="x")))
             fig_user.update_layout(**PLOT_LAYOUT, height=260, title=f"Transaction Timeline — {selected}", xaxis_title="Date", yaxis_title="Amount ($)")
             st.plotly_chart(fig_user, use_container_width=True)
-            render_live_ticker(user_txns)
+
+            st.markdown("**All Transactions**")
+            txn_display = user_txns[["transaction_id","timestamp","amount","merchant_category","city","status"]].copy()
+            txn_display.columns = ["Txn ID", "Timestamp", "Amount ($)", "Merchant", "City", "Status"]
+            txn_display["Amount ($)"] = txn_display["Amount ($)"].apply(lambda x: f"${x:,.2f}")
+
+            def _color_status(val):
+                if val == "Flagged":  return "color:#e63946; font-weight:bold"
+                if val == "Approved": return "color:#06d6a0"
+                return ""
+
+            st.dataframe(
+                txn_display.style.applymap(_color_status, subset=["Status"]),
+                use_container_width=True, hide_index=True, height=300,
+            )
 
 
 # ── TAB 6: LIVE FEED ─────────────────────────────────────────
@@ -460,8 +492,9 @@ with tab6:
 #  AUTO-REFRESH
 # ══════════════════════════════════════════════════════════════
 if st.session_state.auto_refresh:
-    if st.session_state.mode == "stream" and st.session_state.source:
-        st.session_state.source.push_new_transactions(n=3)
+    src = st.session_state.source
+    if st.session_state.mode == "stream" and src and hasattr(src, "push_new_transactions"):
+        src.push_new_transactions(n=3)
     time.sleep(5)
     st.session_state.tick_count += 1
     st.rerun()
