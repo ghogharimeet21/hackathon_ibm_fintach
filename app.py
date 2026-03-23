@@ -1,5 +1,5 @@
 # ============================================================
-#  app.py — FraudGuard Main Entry Point
+#  app.py — LogicLoop Main Entry Point
 #  National Hackathon 2026 · Problem D5
 #
 #  Run:   streamlit run app.py
@@ -16,15 +16,15 @@
 import time
 import streamlit as st
 import pandas as pd
-
-# ── Internal modules ──────────────────────────────────────────
-from config import DEFAULTS, COLORS as C
+import plotly.graph_objects as go
+from config import DEFAULTS, COLORS as C, PLOT_LAYOUT
 from data.loader import build_source
 from data.processor import (
     compute_kpis, compute_hourly, compute_daily,
     compute_merchant_stats, compute_city_stats,
     compute_velocity, compute_impossible_travel,
     compute_false_positive_stats, get_live_ticker,
+    compute_user_profiles,
 )
 from components.kpis    import render_kpi_row, alert_box, section_header
 from components.charts  import (
@@ -40,7 +40,7 @@ from components.alerts  import render_live_ticker, render_schema_report
 #  PAGE CONFIG
 # ══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="FraudGuard | FinTech Anomaly Visualizer",
+    page_title="Logic Loop | FinTech Anomaly Visualizer",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -90,7 +90,7 @@ if "tick_count"   not in st.session_state: st.session_state.tick_count   = 0
 #  SIDEBAR
 # ══════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("## 🛡️ FraudGuard")
+    st.markdown("## 🛡️ LogicLoop")
     st.caption("FinTech Anomaly Visualizer · D5")
     st.divider()
 
@@ -239,10 +239,11 @@ render_schema_report(schema_report)
 # ══════════════════════════════════════════════════════════════
 #  TABS
 # ══════════════════════════════════════════════════════════════
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 Overview",
     "🏪 Merchant Risk",
     "✈️ Geo & Velocity",
+    "👤 User Profiles",
     "🔍 False Positive Tracker",
     "📡 Live Feed",
 ])
@@ -253,6 +254,16 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # ╚═════════════════════════════════════════════╝
 with tab1:
     kpis = compute_kpis(df)
+
+    # Compute velocity + travel counts for KPI row
+    with st.spinner("Computing anomaly counts..."):
+        _vel_df   = compute_velocity(df, threshold=velocity_threshold)
+        _route_df = compute_impossible_travel(df, window_hrs=travel_window)
+
+    kpis["velocity_suspects"]       = len(_vel_df)
+    kpis["velocity_threshold"]      = velocity_threshold
+    kpis["impossible_travel_cases"] = int(_route_df["cases"].sum()) if not _route_df.empty else 0
+
     render_kpi_row(kpis)
 
     st.divider()
@@ -443,7 +454,7 @@ with tab3:
 # ╔═════════════════════════════════════════════╗
 # ║  TAB 4 — FALSE POSITIVE TRACKER            ║
 # ╚═════════════════════════════════════════════╝
-with tab4:
+with tab5:
     section_header(
         "🔍 False Positive Tracker",
         "How many legitimate transactions did our rules incorrectly block?",
@@ -506,9 +517,243 @@ with tab4:
 
 
 # ╔═════════════════════════════════════════════╗
-# ║  TAB 5 — LIVE FEED                         ║
+# ║  TAB 4 — USER RISK PROFILES                ║
+# ╚═════════════════════════════════════════════╝
+with tab4:
+    section_header(
+        "👤 User Risk Profiles — Suspicious Account Watchlist",
+        "Every user scored across 5 signals: fraud flags, velocity bursts, "
+        "impossible travel, high amounts, risky merchants.",
+    )
+
+    with st.spinner("Building user risk profiles... (this takes ~10s for 200k rows)"):
+        profiles_df = compute_user_profiles(
+            df,
+            velocity_threshold=velocity_threshold,
+            travel_window_hrs=travel_window,
+        )
+
+    if profiles_df.empty:
+        alert_box("✅ No suspicious users detected with current filter settings.", level="success")
+    else:
+        # ── Summary KPIs ─────────────────────────────────
+        critical = len(profiles_df[profiles_df["risk_label"].str.contains("CRITICAL")])
+        high     = len(profiles_df[profiles_df["risk_label"].str.contains("HIGH")])
+        medium   = len(profiles_df[profiles_df["risk_label"].str.contains("MEDIUM")])
+
+        u1, u2, u3, u4 = st.columns(4)
+        u1.metric("👥 Flagged Users",      len(profiles_df),  delta="suspicious activity")
+        u2.metric("🔴 CRITICAL",           critical,          delta_color="inverse")
+        u3.metric("🟠 HIGH Risk",          high,              delta_color="inverse")
+        u4.metric("🟡 MEDIUM Risk",        medium)
+
+        st.divider()
+
+        # ── Top 5 User Cards ─────────────────────────────
+        section_header("🚨 Top 5 Highest-Risk Accounts", "Immediate action required")
+
+        for _, user in profiles_df.head(5).iterrows():
+            score    = user["risk_score"]
+            bar_color = (
+                "#e63946" if score >= 70 else
+                "#ff8c42" if score >= 40 else
+                "#ffd166"
+            )
+            filled = int(score)
+            empty  = 100 - filled
+
+            st.markdown(f"""
+            <div style="background:#0d1220; border:1px solid {'#e6394655' if score>=70 else '#ff8c4255' if score>=40 else '#1a2440'};
+                        border-left:5px solid {bar_color}; border-radius:10px;
+                        padding:16px 20px; margin-bottom:12px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <div>
+                        <span style="font-family:Space Mono,monospace; font-size:16px;
+                                     font-weight:700; color:#c8d6e5;">{user['user_id']}</span>
+                        <span style="margin-left:12px; font-size:12px; color:#64748b;">
+                            {user['total_txns']} transactions · ${user['total_spent']:,.0f} total · 
+                            {user['cities_used']} cities
+                        </span>
+                    </div>
+                    <div style="text-align:right;">
+                        <span style="font-size:13px; font-weight:700; color:{bar_color};">
+                            {user['risk_label']}
+                        </span>
+                        <span style="font-family:Space Mono,monospace; font-size:22px;
+                                     font-weight:700; color:{bar_color}; margin-left:12px;">
+                            {score}/100
+                        </span>
+                    </div>
+                </div>
+                <!-- Risk bar -->
+                <div style="background:#1a2440; border-radius:4px; height:6px; margin-bottom:10px;">
+                    <div style="width:{filled}%; background:{bar_color};
+                                border-radius:4px; height:100%; transition:width 0.5s;"></div>
+                </div>
+                <!-- Signal tags -->
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    {''.join([
+                        f'<span style="background:{bar_color}22; border:1px solid {bar_color}55; '
+                        f'color:{bar_color}; border-radius:20px; padding:3px 10px; '
+                        f'font-size:11px; font-weight:600;">{r}</span>'
+                        for r in user['reasons'].split(' | ') if r != '—'
+                    ])}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.divider()
+
+        # ── Full Watchlist Table ──────────────────────────
+        section_header(
+            "📋 Full Suspicious User Watchlist",
+            f"Showing top 100 of {len(profiles_df)} flagged users",
+        )
+
+        display_profiles = profiles_df.head(100)[[
+            "user_id", "risk_score", "risk_label", "flagged_txns",
+            "max_velocity", "impossible_travel", "cities_used",
+            "max_amount", "avg_amount", "has_crypto", "reasons"
+        ]].copy()
+
+        display_profiles.columns = [
+            "User ID", "Risk Score", "Risk Level", "Fraud Flags",
+            "Max Velocity", "Impossible Travel", "Cities",
+            "Max Amount ($)", "Avg Amount ($)", "Crypto?", "Why Flagged"
+        ]
+        display_profiles["Max Amount ($)"] = display_profiles["Max Amount ($)"].apply(lambda x: f"${x:,.0f}")
+        display_profiles["Avg Amount ($)"] = display_profiles["Avg Amount ($)"].apply(lambda x: f"${x:,.0f}")
+        display_profiles["Crypto?"]        = display_profiles["Crypto?"].map({True: "⚠ Yes", False: "No"})
+
+        def color_risk_cell(val):
+            if "CRITICAL" in str(val): return "color:#e63946; font-weight:bold"
+            if "HIGH"     in str(val): return "color:#ff8c42; font-weight:bold"
+            if "MEDIUM"   in str(val): return "color:#ffd166; font-weight:bold"
+            return ""
+
+        st.dataframe(
+            display_profiles.style
+                .applymap(color_risk_cell, subset=["Risk Level"])
+                .applymap(lambda v: "color:#e63946" if "Yes" in str(v) else "", subset=["Crypto?"])
+                .format({"Risk Score": "{}/100"}),
+            use_container_width=True,
+            hide_index=True,
+            height=450,
+        )
+
+        # ── Drill-down: pick a user ───────────────────────
+        st.divider()
+        section_header("🔎 User Transaction Drill-Down", "Pick any user to see their full transaction history")
+
+        selected_user = st.selectbox(
+            "Select User ID",
+            options=profiles_df.head(50)["user_id"].tolist(),
+            format_func=lambda u: f"{u}  (Risk: {profiles_df[profiles_df['user_id']==u]['risk_score'].values[0]}/100)",
+        )
+
+        if selected_user:
+            user_txns = df[df["user_id"] == selected_user].sort_values("timestamp")
+            st.markdown(f"**{len(user_txns)} transactions for `{selected_user}`**")
+
+            from components.alerts import render_live_ticker
+            render_live_ticker(user_txns.rename(columns={
+                "user_id":"user_id","timestamp":"timestamp","amount":"amount",
+                "merchant_category":"merchant_category","city":"city","status":"status",
+                "transaction_id":"transaction_id",
+            }))
+
+            # Mini amount timeline for this user
+            fig_user = go.Figure()
+            flagged_u   = user_txns[user_txns["status"] == "Flagged"]
+            approved_u  = user_txns[user_txns["status"] == "Approved"]
+
+            fig_user.add_trace(go.Scatter(
+                x=approved_u["timestamp"], y=approved_u["amount"],
+                mode="markers", name="Approved",
+                marker=dict(color=C["blue"], size=9),
+            ))
+            fig_user.add_trace(go.Scatter(
+                x=flagged_u["timestamp"], y=flagged_u["amount"],
+                mode="markers", name="Flagged",
+                marker=dict(color=C["red"], size=14, symbol="x"),
+            ))
+            fig_user.update_layout(
+                **PLOT_LAYOUT, height=240,
+                title=f"Transaction Timeline — {selected_user}",
+                xaxis_title="Time", yaxis_title="Amount ($)",
+            )
+            st.plotly_chart(fig_user, use_container_width=True)
+
+
+# ╔═════════════════════════════════════════════╗
+# ║  TAB 5 — FALSE POSITIVE TRACKER            ║
 # ╚═════════════════════════════════════════════╝
 with tab5:
+    section_header(
+        "🔍 False Positive Tracker",
+        "How many legitimate transactions did our rules incorrectly block?",
+    )
+
+    fp_stats = compute_false_positive_stats(df, amount_threshold=amount_threshold)
+
+    fp1, fp2, fp3, fp4 = st.columns(4)
+    fp1.metric("✅ True Fraud Flags",    f"{fp_stats['true_positives']:,}")
+    fp2.metric("❌ False Positives",      f"{fp_stats['false_positives']:,}", delta_color="normal")
+    fp3.metric("🎯 Rule Precision",       f"{fp_stats['precision_pct']}%")
+    fp4.metric("📈 F1 Score",             f"{fp_stats['f1_score']}%")
+
+    st.divider()
+    c1, c2 = st.columns([1, 1.4])
+    with c1:
+        st.plotly_chart(
+            chart_precision_gauge(fp_stats["precision_pct"], fp_stats["recall_pct"]),
+            use_container_width=True,
+        )
+    with c2:
+        section_header("📊 Rule Performance Breakdown")
+        perf = {
+            "Metric": [
+                "Total Transactions",
+                "True Fraud Flags",
+                "False Positives (Wrongly Blocked)",
+                "Rule Precision",
+                "Estimated Recall",
+                "F1 Score",
+            ],
+            "Value": [
+                f"{len(df):,}",
+                f"{fp_stats['true_positives']:,}",
+                f"{fp_stats['false_positives']:,}",
+                f"{fp_stats['precision_pct']}%",
+                f"{fp_stats['recall_pct']}%",
+                f"{fp_stats['f1_score']}%",
+            ],
+        }
+        st.dataframe(pd.DataFrame(perf), use_container_width=True, hide_index=True)
+
+    st.divider()
+    section_header(
+        "⚙️ Rule Threshold Simulator",
+        "Drag the 'High-value alert ($)' slider in the sidebar to simulate different thresholds.",
+    )
+    st.plotly_chart(
+        chart_threshold_sweep(fp_stats["threshold_sweep"], amount_threshold),
+        use_container_width=True,
+    )
+    st.dataframe(fp_stats["threshold_sweep"], use_container_width=True, hide_index=True)
+
+    alert_box(
+        f"💡 <strong>Optimal Rule:</strong> Set amount threshold at <strong>$500</strong> for "
+        "Crypto Exchange and Electronics categories. This catches ~92% of fraud while keeping "
+        "false positives near zero — no unnecessary friction for genuine customers.",
+        level="success",
+    )
+
+
+# ╔═════════════════════════════════════════════╗
+# ║  TAB 6 — LIVE FEED                         ║
+# ╚═════════════════════════════════════════════╝
+with tab6:
     section_header(
         "📡 Live Transaction Feed",
         "Most recent transactions — fraud rows highlighted in red. "
@@ -530,7 +775,7 @@ class KafkaStreamSource(DataSource):
     def __init__(self, bootstrap_servers, topic):
         self._consumer = Consumer({
             "bootstrap.servers": bootstrap_servers,
-            "group.id": "fraudguard",
+            "group.id": "LogicLoop",
         })
         self._consumer.subscribe([topic])
         self._buffer = []
@@ -564,7 +809,7 @@ st.divider()
 st.markdown(f"""
 <div style="display:flex;justify-content:space-between;
             font-size:11px;color:{C['dimmed']};font-family:Space Mono,monospace;">
-    <span>National Hackathon 2026 · Track D5 · FraudGuard v2.0</span>
+    <span>National Hackathon 2026 · Track D5 · LogicLoop v2.0</span>
     <span>Streamlit + Plotly + Pandas · Multi-file architecture</span>
     <span>Tick #{st.session_state.tick_count}</span>
 </div>

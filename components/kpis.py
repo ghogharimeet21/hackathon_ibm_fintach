@@ -17,10 +17,12 @@ def render_kpi_row(kpis: dict):
               delta="Industry avg: 1.2%", delta_color="normal")
     c4.metric("💰 Avg Fraud Amount",   f"${kpis['avg_fraud_amt']:,.0f}",
               delta=f"{kpis['amount_multiple']}× above normal", delta_color="inverse")
-    c5.metric("⚡ Velocity Suspects",  "—",
-              delta="see Geo & Velocity tab")
-    c6.metric("✈️ Impossible Travel",  "—",
-              delta="see Geo & Velocity tab")
+    c5.metric("⚡ Velocity Suspects",
+              f"{kpis.get('velocity_suspects', 0):,}",
+              delta=f"≥{kpis.get('velocity_threshold', 5)} txns/hr", delta_color="inverse")
+    c6.metric("✈️ Impossible Travel",
+              f"{kpis.get('impossible_travel_cases', 0):,}",
+              delta="multi-city < 1hr", delta_color="inverse")
 
 
 def alert_box(text: str, level: str = "danger"):

@@ -246,3 +246,99 @@ def get_live_ticker(df: pd.DataFrame, n: int = 15) -> pd.DataFrame:
         .head(n)
         .reset_index(drop=True)
     )
+
+
+# ── 10. User Risk Profiler ────────────────────────────────────
+def compute_user_profiles(df: pd.DataFrame,
+                           velocity_threshold: int = 5,
+                           travel_window_hrs: float = 1.0) -> pd.DataFrame:
+    """
+    Builds a risk profile for every suspicious user.
+    Combines velocity, geo anomaly, amount, and fraud flags
+    into a single ranked table — the "user watchlist".
+    """
+    profiles = []
+
+    for uid, grp in df.groupby("user_id"):
+        grp = grp.sort_values("timestamp")
+        total_txns     = len(grp)
+        flagged_txns   = int(grp["is_flagged"].sum())
+        total_spent    = round(grp["amount"].sum(), 2)
+        max_amount     = round(grp["amount"].max(), 2)
+        avg_amount     = round(grp["amount"].mean(), 2)
+        cities_used    = grp["city"].nunique()
+        merchants_used = grp["merchant_category"].nunique()
+        has_crypto     = "Crypto Exchange" in grp["merchant_category"].values
+
+        # ── Velocity check ──────────────────────────────────
+        ts_list  = grp["timestamp"].tolist()
+        amt_list = grp["amount"].tolist()
+        sta_list = grp["status"].tolist()
+        max_velocity = 0
+        for i, ts_start in enumerate(ts_list):
+            window = [t for t in ts_list
+                      if ts_start <= t <= ts_start + timedelta(hours=1)]
+            if len(window) > max_velocity:
+                max_velocity = len(window)
+
+        # ── Impossible travel check ─────────────────────────
+        impossible_travel_count = 0
+        for i in range(len(grp) - 1):
+            t1 = grp.iloc[i]
+            t2 = grp.iloc[i + 1]
+            diff_hrs = (t2["timestamp"] - t1["timestamp"]).total_seconds() / 3600
+            if diff_hrs <= travel_window_hrs and t1["city"] != t2["city"]:
+                impossible_travel_count += 1
+
+        # ── Risk Score (0-100) ──────────────────────────────
+        score = 0
+        score += min(40, flagged_txns * 15)            # fraud flags
+        score += min(20, max(0, max_velocity - 3) * 5) # velocity
+        score += min(15, impossible_travel_count * 8)  # geo anomaly
+        score += 10 if has_crypto else 0               # risky merchant
+        score += min(15, int(max_amount / 300))        # high amounts
+        score = min(100, score)
+
+        if score < 10 and flagged_txns == 0:
+            continue  # skip completely clean users
+
+        # ── Risk Label ──────────────────────────────────────
+        if score >= 70:   risk_label = "🔴 CRITICAL"
+        elif score >= 40: risk_label = "🟠 HIGH"
+        elif score >= 15: risk_label = "🟡 MEDIUM"
+        else:             risk_label = "🟢 LOW"
+
+        # ── Reason tags ─────────────────────────────────────
+        reasons = []
+        if flagged_txns > 0:           reasons.append(f"{flagged_txns} fraud flag(s)")
+        if max_velocity >= velocity_threshold:
+            reasons.append(f"velocity burst ({max_velocity} txns/hr)")
+        if impossible_travel_count > 0:
+            reasons.append(f"{impossible_travel_count} impossible travel")
+        if has_crypto:                 reasons.append("crypto exchange")
+        if max_amount > 1000:          reasons.append(f"${max_amount:,.0f} max txn")
+
+        profiles.append({
+            "user_id":          uid,
+            "risk_score":       score,
+            "risk_label":       risk_label,
+            "total_txns":       total_txns,
+            "flagged_txns":     flagged_txns,
+            "max_velocity":     max_velocity,
+            "impossible_travel":impossible_travel_count,
+            "cities_used":      cities_used,
+            "has_crypto":       has_crypto,
+            "total_spent":      total_spent,
+            "max_amount":       max_amount,
+            "avg_amount":       avg_amount,
+            "reasons":          " | ".join(reasons) if reasons else "—",
+        })
+
+    if not profiles:
+        return pd.DataFrame()
+
+    return (
+        pd.DataFrame(profiles)
+        .sort_values("risk_score", ascending=False)
+        .reset_index(drop=True)
+    )
