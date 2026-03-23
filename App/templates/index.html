@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LogicLoop | Fraud Visualizer</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div>
+        <div class="title">
+          🛡️ Logic<span class="accent">Loop</span>
+        </div>
+        <div class="subtitle">FinTech Transaction Anomaly & Fraud Visualizer (D5)</div>
+      </div>
+      <div class="mode-badge">
+        <span class="dot" id="liveDot"></span>
+        <span id="modeText">Batch Mode</span>
+      </div>
+    </header>
+
+    <section class="controls">
+      <div class="control-row">
+        <div class="upload">
+          <input id="csvFile" type="file" accept=".csv" />
+          <button id="loadBtn" class="btn">▶ Load Data</button>
+        </div>
+
+        <div class="toggles">
+          <label class="toggle">
+            <input id="modeToggle" type="checkbox" />
+            <span class="toggle-label">Live Stream Mode</span>
+          </label>
+
+          <label class="toggle">
+            <input id="autoToggle" type="checkbox" />
+            <span class="toggle-label">Auto-Refresh</span>
+          </label>
+        </div>
+
+        <button id="refreshBtn" class="btn secondary">🔁 Refresh Now</button>
+      </div>
+
+      <div class="kpis" id="kpisGrid">
+        <div class="kpi-card"><div class="kpi-label">Total Transactions</div><div class="kpi-value" id="kpi-total">-</div></div>
+        <div class="kpi-card"><div class="kpi-label">Flagged Alerts</div><div class="kpi-value" id="kpi-flagged">-</div></div>
+        <div class="kpi-card"><div class="kpi-label">Fraud Rate</div><div class="kpi-value" id="kpi-fraud-rate">-</div></div>
+        <div class="kpi-card"><div class="kpi-label">Avg Fraud Amount</div><div class="kpi-value" id="kpi-avg-fraud-amt">-</div></div>
+        <div class="kpi-card"><div class="kpi-label">Velocity Suspects</div><div class="kpi-value" id="kpi-velocity-suspects">-</div></div>
+        <div class="kpi-card"><div class="kpi-label">Impossible Travel</div><div class="kpi-value" id="kpi-impossible-travel">-</div></div>
+      </div>
+    </section>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="overview">📊 Overview</button>
+      <button class="tab" data-tab="merchant">🏪 Merchant Risk</button>
+      <button class="tab" data-tab="geo">✈️ Geo Anomaly</button>
+      <button class="tab" data-tab="velocity">⚡ Velocity Spikes</button>
+      <button class="tab" data-tab="users">👤 User Profiles</button>
+      <button class="tab" data-tab="live">📡 Live Feed</button>
+    </nav>
+
+    <main class="content">
+      <section class="tab-panel active" id="panel-overview">
+        <div class="chart-grid">
+          <div class="card">
+            <div class="card-title">24-Hour Heatmap</div>
+            <div id="chart-hourly-heatmap" class="plot"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Daily Fraud Trend</div>
+            <div id="chart-daily-trend" class="plot"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Amount Distribution</div>
+            <div id="chart-amount-distribution" class="plot"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="panel-merchant">
+        <div class="chart-grid">
+          <div class="card">
+            <div class="card-title">Merchant Treemap</div>
+            <div id="chart-merchant-treemap" class="plot"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Fraud Donut</div>
+            <div id="chart-merchant-fraud-donut" class="plot"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Fraud Rate by Merchant</div>
+            <div id="chart-merchant-bar" class="plot"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="panel-geo">
+        <div class="chart-grid">
+          <div class="card">
+            <div class="card-title">Geographic Fraud Distribution</div>
+            <div id="chart-geo-map" class="plot"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Impossible Travel Routes</div>
+            <div id="chart-travel-routes" class="plot"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Top Routes</div>
+          <div id="table-travel-routes" class="table-wrap"></div>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="panel-velocity">
+        <div class="chart-grid">
+          <div class="card">
+            <div class="card-title">Velocity Histogram</div>
+            <div id="chart-velocity-histogram" class="plot"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="panel-users">
+        <div class="chart-grid">
+          <div class="card">
+            <div class="card-title">Watchlist (Top 100)</div>
+            <div id="table-watchlist" class="table-wrap"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Investigate a user</div>
+          <div class="inline">
+            <select id="userSelect" class="select"></select>
+            <button id="loadUserTxnsBtn" class="btn secondary">Load Txns</button>
+          </div>
+          <div id="table-user-txns" class="table-wrap" style="margin-top: 10px;"></div>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="panel-live">
+        <div class="card">
+          <div class="card-title">Most recent 25 transactions</div>
+          <div id="table-live-ticker" class="table-wrap"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
+

@@ -9,6 +9,8 @@
 #  whether data came from a file or a live stream.
 # ============================================================
 
+from __future__ import annotations
+
 import pandas as pd
 import numpy as np
 import random
